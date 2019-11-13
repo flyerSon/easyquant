@@ -118,8 +118,40 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
             print("[insert_or_update_id_data] 更新成功 {0},{1}".format(name,dict_data["date"]))
         cur.close()
   
-
-    
+    quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
+    data_vec = quotation.market_snapshot(prefix=True)
+    connect_mysql()
+    check_time,table_flag,date_flag,table,date,date_vec = False,False,False,None,None,None
+    localtime = time.localtime(time.time())
+    for id in data_vec:
+        stock_vec = data_vec[id]
+        if not date_vec:
+            date = stock_vec["date"]
+            date_vec = date.split("-")
+        #检查时间
+        if not check_time:
+            year,mon,day = int(date_vec[0]),int(date_vec[1]),int(date_vec[2])
+            if year == localtime.tm_year:
+                if mon == localtime.tm_mon:
+                    if day != localtime.tm_mday:
+                        print("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
+                        break
+            check_time = True
+        if not table:
+            table = TABLE + "_" + date_vec[0]
+        if not date_flag:
+            date = DATE + date_vec[1] + "_" + date_vec[2]
+        if not table_flag:
+            create_stock_table(table)
+            table_flag = True
+        if not date_flag:
+            add_date_column(table,date)
+            date_flag = True
+        if stock_vec["name"] == "世纪华通":
+            insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
+            
+    print("[do_date_today] {0} 数据已处理完毕".format(date))
+   
 #处理当天所有的股票数据
 def do_date_today():
     quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
@@ -155,7 +187,56 @@ def do_date_today():
             insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
             
     print("[do_date_today] {0} 数据已处理完毕".format(date))
+
+
+#判断一天的走势，返回，当天是否涨(True),下午的开价
+def compare_same_data(data_str):
+    ret_vec = []
+    data_str_vec = data_str.split("?")
+    for data in data_str_vec:
+        if data:
+            ret_vec.append(eval(data))
+    begin_end_vec = [False,ret_vec[len(ret_vec)-1]]
+    #现价大于今日开盘价和大于昨日收盘价
+    if begin_end_vec[1]["now"] > begin_end_vec[1]["open"] and begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
+        begin_end_vec[0] = True
+    return begin_end_vec
     
+def do_analysis_one_stock(table,id):
+    ret_map = {}
+    while True:
+        global con
+        cur = con.cursor()
+        sql = "select * from {0} where f_id = '{1}'".format(table,id)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        for data_vec in ret_data:
+            for i in range(2,len(data_vec)):
+                day_begin_end_vec = compare_same_data(data_vec[i])
+                ret_map[day_begin_end_vec[1]] = day_begin_end_vec[0]
+        break
+    cur.close()
+    for key in ret_map:
+        
     
+def do_analysis_data():
+    connect_mysql()
+    localtime = time.localtime(time.time())
+    table = TABLE + "_" + str(localtime.tm_year)
+    while True:
+        global con
+        cur = con.cursor()
+        sql = "select f_id from {0}".format(table)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        for id_vec in ret_data:
+            print("id:",id_vec[0])
+            do_analysis_one_stock(table,id_vec[0])
+        break
+    cur.close()
+
 if __name__ == "__main__":
-    do_date_today()
+    do_analysis_data()
+    #do_date_today()
