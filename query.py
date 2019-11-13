@@ -18,6 +18,8 @@ TABLE = "t_stock"
 DATE = "f_"
 con = None
 logger = None
+WIN_NUM = 3 
+LOSE_NUM = 5
 
 
 def connect_mysql():
@@ -209,7 +211,7 @@ def do_analysis_one_stock(table,id,ret_map):
         for data_vec in ret_data:
             for i in range(2,len(data_vec)):
                 day_begin_end_vec = compare_same_data(data_vec[i])
-                if not begin_end_vec:
+                if not day_begin_end_vec:
                     continue
                 day_data = day_begin_end_vec[1]
                 if not day_data["name"] in ret_map:
@@ -267,9 +269,13 @@ def main_do_analysis_data():
         win_vec = condition_vec[0]
         for unit in win_vec:
             logger.info("[do_analysis_data] 股票 {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
+            if unit[1] >= WIN_NUM:
+                logger.warning("[do_analysis_data] 注意连涨 股票 {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
         lose_vec = condition_vec[1]
         for unit in lose_vec:
             logger.info("[do_analysis_data] 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
+            if unit[1] >= LOSE_NUM:
+                logger.warning("[do_analysis_data] 注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
         logger.info("[do_analysis_data] 股票 {0} 分析结束".format(key))
     logger.info("[do_analysis_data] 分析 {0} 数据结束".format(num))
 
@@ -396,4 +402,4 @@ if __name__ == "__main__":
             logger.info("[main] 参数错误 {0} 提示 collect,analysis,tick".format(sys.argv))
         close_mysql()
         break
-    logger.info("[main] 处理花费时间 {0}".format(time.time()-begin_time))
+    logger.info("[main] 处理花费时间 {0} 秒".format(time.time()-begin_time))
