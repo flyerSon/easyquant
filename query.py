@@ -45,7 +45,7 @@ def check_stock_table(table):
     
 def create_stock_table(table):
     if check_stock_table(table):
-        print("[create_stock_table] {0} 表已经存在".format(table))
+        logger.info("[create_stock_table] {0} 表已经存在".format(table))
         return
     global con
     cur = con.cursor()
@@ -57,7 +57,7 @@ def create_stock_table(table):
     """.format(table)
     cur.execute(sql)
     cur.close()
-    print("[create_stock_table] {0} 表创建成功".format(table))
+    logger.info("[create_stock_table] {0} 表创建成功".format(table))
 
 def check_date_column(table,date):
     ret = False
@@ -73,14 +73,14 @@ def check_date_column(table,date):
     
 def add_date_column(table,date):
     if check_date_column(table,date):
-        print("[add_date_column] {0} 列已经存在".format(date))
+        logger.info("[add_date_column] {0} 列已经存在".format(date))
         return
     global con
     cur = con.cursor()
     sql = "alter table {0} add column {1} text(100000) NOT NULL COMMENT '日期'".format(table,date)
     cur.execute(sql)
     cur.close()
-    print("[add_date_column] {0} 列创建成功".format(date))
+    logger.info("[add_date_column] {0} 列创建成功".format(date))
 
 def check_id_data(table,id):
     ret = False
@@ -123,7 +123,7 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
         cur = con.cursor()
         sql = 'insert into {0} (f_id, f_name,{1})values("{2}","{3}","{4}")'.format(table,date,id,name,data)
         if cur.execute(sql) == 1:
-            print("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+            logger.info("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
         cur.close()
     else:
         add_flag = False
@@ -140,10 +140,10 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
             cur = con.cursor()
             sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,cur_data,id)
             if cur.execute(sql) == 1:
-                print("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+                logger.info("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
             cur.close()
         else:
-            print("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+            logger.info("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
   
 #处理当天所有的股票数据
 def main_do_date_today():
@@ -163,7 +163,7 @@ def main_do_date_today():
             if year == localtime.tm_year:
                 if mon == localtime.tm_mon:
                     if day != localtime.tm_mday:
-                        print("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
+                        logger.info("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
                         break
             check_time = True
         if not table:
@@ -178,7 +178,7 @@ def main_do_date_today():
         insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
         num = num + 1
             
-    print("[do_date_today] {0} {1} 数据已处理完毕".format(date,num))
+    logger.info("[do_date_today] {0} {1} 数据已处理完毕".format(date,num))
 
 ##########################################################################处理数据结束###############################################################
 
@@ -251,7 +251,7 @@ def main_do_analysis_data():
     ret_map = {}
     num = 0
     while True:
-        print("[do_analysis_data] 分析数据开始")
+        logger.info("[do_analysis_data] 分析数据开始")
         sql = "select f_id from {0}".format(table)
         if cur.execute(sql) <= 0:
             break
@@ -263,15 +263,15 @@ def main_do_analysis_data():
     cur.close()
     for key in ret_map:
         condition_vec = ret_map[key]
-        print("[do_analysis_data] 股票 {0} 分析开始".format(key))
+        logger.info("[do_analysis_data] 股票 {0} 分析开始".format(key))
         win_vec = condition_vec[0]
         for unit in win_vec:
-            print("[do_analysis_data] 股票 {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
+            logger.info("[do_analysis_data] 股票 {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
         lose_vec = condition_vec[1]
         for unit in lose_vec:
-            print("[do_analysis_data] 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
-        print("[do_analysis_data] 股票 {0} 分析结束".format(key))
-    print("[do_analysis_data] 分析 {0} 数据结束".format(num))
+            logger.info("[do_analysis_data] 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
+        logger.info("[do_analysis_data] 股票 {0} 分析结束".format(key))
+    logger.info("[do_analysis_data] 分析 {0} 数据结束".format(num))
 
 ##########################################################################分析数据结束###############################################################
 
@@ -304,11 +304,11 @@ def tick_id_date_repeat_data(table,date,id):
             break
         sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,last_string,id)
         if cur.execute(sql) == 1:
-            print("[tick_id_date_repeat_data] 剔除重复数据成功 {0},{1}".format(id,date))
+            logger.info("[tick_id_date_repeat_data] 剔除重复数据成功 {0},{1}".format(id,date))
         break
     cur.close()
     if not repeat_flag:
-        print("[tick_id_date_repeat_data] 没有剔除的重复数据 {0},{1}".format(id,date))
+        logger.info("[tick_id_date_repeat_data] 没有剔除的重复数据 {0},{1}".format(id,date))
 
 def get_all_column_name(table):
     global con
@@ -334,7 +334,7 @@ def main_tick_repeat_data():
     ret_map = {}
     num = 0
     while True:
-        print("[tick_repeat_data] 剔除重复数据开始")
+        logger.info("[tick_repeat_data] 剔除重复数据开始")
         sql = "select f_id from {0}".format(table)
         if cur.execute(sql) <= 0:
             break
@@ -348,7 +348,7 @@ def main_tick_repeat_data():
             num = num + 1
         break
     cur.close()
-    print("[tick_repeat_data] 剔除 {0} 重复数据结束".format(num))
+    logger.info("[tick_repeat_data] 剔除 {0} 重复数据结束".format(num))
 
 ##########################################################################剔除重复数据结束#############################################################
 
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     begin_time = time.time()
     while True:
         if len(sys.argv) < 2:
-            print("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
+            logger.info("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
             break
         connect_mysql()    
         init_log()
@@ -393,8 +393,7 @@ if __name__ == "__main__":
         elif arg == "tick":
             main_tick_repeat_data()
         else:
-            print("[main] 参数错误 {0} 提示 collect,analysis,tick".format(sys.argv))
+            logger.info("[main] 参数错误 {0} 提示 collect,analysis,tick".format(sys.argv))
         close_mysql()
         break
-    print("[main] 处理花费时间 {0}".format(time.time()-begin_time))
-    logger.info('test')
+    logger.info("[main] 处理花费时间 {0}".format(time.time()-begin_time))
