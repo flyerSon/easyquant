@@ -4,6 +4,7 @@ import easyquotation
 import time
 import json
 import sys
+import logging
 
 #数据库
 import pymysql
@@ -16,6 +17,7 @@ CHARSET = "utf8"
 TABLE = "t_stock"
 DATE = "f_"
 con = None
+logger = None
 
 
 def connect_mysql():
@@ -149,6 +151,7 @@ def main_do_date_today():
     data_vec = quotation.market_snapshot(prefix=True)
     check_time,table_flag,date_flag,table,date,date_vec = False,False,False,None,None,None
     localtime = time.localtime(time.time())
+    num = 0
     for id in data_vec:
         stock_vec = data_vec[id]
         if not date_vec:
@@ -173,8 +176,9 @@ def main_do_date_today():
             add_date_column(table,date)
             date_flag = True
         insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
+        num = num + 1
             
-    print("[do_date_today] {0} 数据已处理完毕".format(date))
+    print("[do_date_today] {0} {1} 数据已处理完毕".format(date,num))
 
 ##########################################################################处理数据结束###############################################################
 
@@ -245,6 +249,7 @@ def main_do_analysis_data():
     global con
     cur = con.cursor()
     ret_map = {}
+    num = 0
     while True:
         print("[do_analysis_data] 分析数据开始")
         sql = "select f_id from {0}".format(table)
@@ -253,6 +258,7 @@ def main_do_analysis_data():
         ret_data = cur.fetchall()
         for id_vec in ret_data:
             do_analysis_one_stock(table,id_vec[0],ret_map)
+            num = num + 1
         break
     cur.close()
     for key in ret_map:
@@ -265,7 +271,7 @@ def main_do_analysis_data():
         for unit in lose_vec:
             print("[do_analysis_data] 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
         print("[do_analysis_data] 股票 {0} 分析结束".format(key))
-    print("[do_analysis_data] 分析数据结束")
+    print("[do_analysis_data] 分析 {0} 数据结束".format(num))
 
 ##########################################################################分析数据结束###############################################################
 
@@ -326,6 +332,7 @@ def main_tick_repeat_data():
     global con
     cur = con.cursor()
     ret_map = {}
+    num = 0
     while True:
         print("[tick_repeat_data] 剔除重复数据开始")
         sql = "select f_id from {0}".format(table)
@@ -338,20 +345,46 @@ def main_tick_repeat_data():
         for id_vec in ret_data:
             for i in range(2,len(column_vec)):
                 tick_id_date_repeat_data(table,column_vec[i],id_vec[0])
+            num = num + 1
         break
     cur.close()
-    print("[tick_repeat_data] 剔除重复数据结束")
+    print("[tick_repeat_data] 剔除 {0} 重复数据结束".format(num))
 
 ##########################################################################剔除重复数据结束#############################################################
+
+
+
+def init_log():
+    global logger
+    localtime = time.localtime(time.time())
+    date = str(localtime.tm_mon) + "_" + str(localtime.tm_mday)
+    logger = logging.getLogger("logger")
+    logger.setLevel(logging.DEBUG)
+
+    log_file = "./history_log/" + date + ".log"
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.DEBUG)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter("%(asctime)s-%(levelname)s-%(message)s")
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
 
      
 if __name__ == "__main__":
     begin_time = time.time()
     while True:
         if len(sys.argv) < 2:
-            print("[main] 参数数量不正确 {0}".format(sys.argv))
+            print("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
             break
         connect_mysql()    
+        init_log()
         arg = sys.argv[1]
         if arg == "collect":
             main_do_date_today()
@@ -364,3 +397,4 @@ if __name__ == "__main__":
         close_mysql()
         break
     print("[main] 处理花费时间 {0}".format(time.time()-begin_time))
+    logger.info('test')
