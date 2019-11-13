@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import easyquotation
-import easyquant
-from easyquant import DefaultQuotationEngine, DefaultLogHandler, PushBaseEngine
 import time
 import json
 
