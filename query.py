@@ -3,6 +3,7 @@
 import easyquotation
 import time
 import json
+import sys
 
 #数据库
 import pymysql
@@ -25,9 +26,9 @@ def close_mysql():
     global con
     if con:
         con.close()
-        print("[关闭数据库连接]")
 
 
+##########################################################################处理数据开始###############################################################
 def check_stock_table(table):
     ret = False
     global con
@@ -74,11 +75,10 @@ def add_date_column(table,date):
         return
     global con
     cur = con.cursor()
-    sql = "alter table {0} add column {1} varchar(100000) NOT NULL COMMENT '日期'".format(table,date)
+    sql = "alter table {0} add column {1} text(100000) NOT NULL COMMENT '日期'".format(table,date)
     cur.execute(sql)
     cur.close()
     print("[add_date_column] {0} 列创建成功".format(date))
-
 
 def check_id_data(table,id):
     ret = False
@@ -98,8 +98,22 @@ def get_id_date_data(table,date,id):
     ret_data = cur.fetchone()
     cur.close()
     return ret_data[0]
-    
-    
+
+def get_same_day_all_dict_data(data_str):
+    ret_vec = []
+    data_str_vec = data_str.split("?")
+    for data in data_str_vec:
+        if data:
+            ret_vec.append(eval(data))
+    return ret_vec
+        
+def get_same_day_last_data(data_str):
+    ret_vec = get_same_day_all_dict_data(data_str)
+    last_data = None
+    if len(ret_vec) > 0:
+        last_data = ret_vec[len(ret_vec) - 1]
+    return last_data
+        
 def insert_or_update_id_data(table,date,id,name,dict_data):
     global con
     data = str(dict_data)
@@ -110,53 +124,29 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
             print("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
         cur.close()
     else:
+        add_flag = False
+        
         old_data = get_id_date_data(table,date,id)
-        cur = con.cursor()
-        cur_data = old_data + "?" + data
-        sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,cur_data,id)
-        if cur.execute(sql) == 1:
-            print("[insert_or_update_id_data] 更新成功 {0},{1}".format(name,dict_data["date"]))
-        cur.close()
+        last_data = get_same_day_last_data(old_data)
+        if last_data:
+            if last_data["time"] != dict_data["time"]:
+                add_flag = True
+        else:
+            add_flag = True
+        if add_flag:
+            cur_data = old_data + "?" + data
+            cur = con.cursor()
+            sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,cur_data,id)
+            if cur.execute(sql) == 1:
+                print("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+            cur.close()
+        else:
+            print("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
   
-    quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
-    data_vec = quotation.market_snapshot(prefix=True)
-    connect_mysql()
-    check_time,table_flag,date_flag,table,date,date_vec = False,False,False,None,None,None
-    localtime = time.localtime(time.time())
-    for id in data_vec:
-        stock_vec = data_vec[id]
-        if not date_vec:
-            date = stock_vec["date"]
-            date_vec = date.split("-")
-        #检查时间
-        if not check_time:
-            year,mon,day = int(date_vec[0]),int(date_vec[1]),int(date_vec[2])
-            if year == localtime.tm_year:
-                if mon == localtime.tm_mon:
-                    if day != localtime.tm_mday:
-                        print("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
-                        break
-            check_time = True
-        if not table:
-            table = TABLE + "_" + date_vec[0]
-        if not date_flag:
-            date = DATE + date_vec[1] + "_" + date_vec[2]
-        if not table_flag:
-            create_stock_table(table)
-            table_flag = True
-        if not date_flag:
-            add_date_column(table,date)
-            date_flag = True
-        if stock_vec["name"] == "世纪华通":
-            insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
-            
-    print("[do_date_today] {0} 数据已处理完毕".format(date))
-   
 #处理当天所有的股票数据
-def do_date_today():
+def main_do_date_today():
     quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
     data_vec = quotation.market_snapshot(prefix=True)
-    connect_mysql()
     check_time,table_flag,date_flag,table,date,date_vec = False,False,False,None,None,None
     localtime = time.localtime(time.time())
     for id in data_vec:
@@ -175,68 +165,202 @@ def do_date_today():
             check_time = True
         if not table:
             table = TABLE + "_" + date_vec[0]
-        if not date_flag:
-            date = DATE + date_vec[1] + "_" + date_vec[2]
         if not table_flag:
             create_stock_table(table)
             table_flag = True
         if not date_flag:
+            date = DATE + date_vec[1] + "_" + date_vec[2]
             add_date_column(table,date)
             date_flag = True
-        if stock_vec["name"] == "世纪华通":
-            insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
+        insert_or_update_id_data(table,date,id,stock_vec["name"],stock_vec)
             
     print("[do_date_today] {0} 数据已处理完毕".format(date))
 
+##########################################################################处理数据结束###############################################################
+
+
+
+##########################################################################分析数据开始###############################################################
 
 #判断一天的走势，返回，当天是否涨(True),下午的开价
 def compare_same_data(data_str):
-    ret_vec = []
-    data_str_vec = data_str.split("?")
-    for data in data_str_vec:
-        if data:
-            ret_vec.append(eval(data))
-    begin_end_vec = [False,ret_vec[len(ret_vec)-1]]
-    #现价大于今日开盘价和大于昨日收盘价
-    if begin_end_vec[1]["now"] > begin_end_vec[1]["open"] and begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
-        begin_end_vec[0] = True
+    ret_vec = get_same_day_all_dict_data(data_str)
+    begin_end_vec = None
+    if len(ret_vec) > 0:
+        begin_end_vec = [False,ret_vec[len(ret_vec)-1]]
+        #现价大于今日开盘价和大于昨日收盘价
+        if begin_end_vec[1]["now"] > begin_end_vec[1]["open"] and begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
+            begin_end_vec[0] = True
     return begin_end_vec
     
-def do_analysis_one_stock(table,id):
-    ret_map = {}
+def do_analysis_one_stock(table,id,ret_map):
+    global con
+    cur = con.cursor()
     while True:
-        global con
-        cur = con.cursor()
         sql = "select * from {0} where f_id = '{1}'".format(table,id)
         if cur.execute(sql) <= 0:
             break
         ret_data = cur.fetchall()
+        continue_num,last_win_flag = 0,False
         for data_vec in ret_data:
             for i in range(2,len(data_vec)):
                 day_begin_end_vec = compare_same_data(data_vec[i])
-                ret_map[day_begin_end_vec[1]] = day_begin_end_vec[0]
+                if not begin_end_vec:
+                    continue
+                day_data = day_begin_end_vec[1]
+                if not day_data["name"] in ret_map:
+                    condition_vec = [[],[]] 
+                    ret_map[day_data["name"]] = condition_vec
+                condition_vec = ret_map[day_data["name"]]
+                #如果上次跟这次涨跌情形不一致，则置0
+                if day_begin_end_vec[0] != last_win_flag:
+                    last_win_flag = day_begin_end_vec[0]
+                    continue_num = 0
+                continue_num = continue_num + 1
+                if last_win_flag:
+                    win_vec = condition_vec[0]
+                    if continue_num == 1:
+                        #开始涨的日期，连涨次数
+                        vec = [day_data["date"],continue_num]
+                        win_vec.append(vec)
+                    else:
+                        vec = win_vec[len(win_vec)-1]
+                        vec[1] = vec[1] + 1
+                else:
+                    lose_vec = condition_vec[1]
+                    if continue_num == 1:
+                        #开始跌的日期，连跌次数
+                        vec = [day_data["date"],continue_num]
+                        lose_vec.append(vec)
+                    else:
+                        vec = lose_vec[len(lose_vec)-1]
+                        vec[1] = vec[1] + 1    
         break
     cur.close()
-    for key in ret_map:
-        
-    
-def do_analysis_data():
-    connect_mysql()
+
+#分析数据    
+def main_do_analysis_data():
     localtime = time.localtime(time.time())
     table = TABLE + "_" + str(localtime.tm_year)
+    global con
+    cur = con.cursor()
+    ret_map = {}
     while True:
-        global con
-        cur = con.cursor()
+        print("[do_analysis_data] 分析数据开始")
         sql = "select f_id from {0}".format(table)
         if cur.execute(sql) <= 0:
             break
         ret_data = cur.fetchall()
         for id_vec in ret_data:
-            print("id:",id_vec[0])
-            do_analysis_one_stock(table,id_vec[0])
+            do_analysis_one_stock(table,id_vec[0],ret_map)
         break
     cur.close()
+    for key in ret_map:
+        condition_vec = ret_map[key]
+        print("[do_analysis_data] 股票 {0} 分析开始".format(key))
+        win_vec = condition_vec[0]
+        for unit in win_vec:
+            print("[do_analysis_data] 股票 {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
+        lose_vec = condition_vec[1]
+        for unit in lose_vec:
+            print("[do_analysis_data] 股票 {0} 从 {1} 开始连续跌 {2} 次".format(key,unit[0],unit[1]))
+        print("[do_analysis_data] 股票 {0} 分析结束".format(key))
+    print("[do_analysis_data] 分析数据结束")
 
+##########################################################################分析数据结束###############################################################
+
+
+##########################################################################剔除重复数据开始#############################################################
+
+def tick_id_date_repeat_data(table,date,id):
+    global con
+    cur = con.cursor()
+    repeat_flag = False
+    while True:
+        if not check_id_data(table,id):
+            break
+        data_str = get_id_date_data(table,date,id)
+        ret_vec = get_same_day_all_dict_data(data_str)
+        if len(ret_vec) == 0:
+            break
+        last_data,last_string = None,None
+        for each_data in ret_vec:
+            if not last_data or last_data["time"] != each_data["time"]:
+                last_data = each_data
+                if not last_string:
+                    last_string = str(last_data)
+                else:
+                    last_string = last_string + "?" + str(last_data)
+            else:
+                if last_data["time"] == each_data["time"]:
+                    repeat_flag = True
+        if not repeat_flag:
+            break
+        sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,last_string,id)
+        if cur.execute(sql) == 1:
+            print("[tick_id_date_repeat_data] 剔除重复数据成功 {0},{1}".format(id,date))
+        break
+    cur.close()
+    if not repeat_flag:
+        print("[tick_id_date_repeat_data] 没有剔除的重复数据 {0},{1}".format(id,date))
+
+def get_all_column_name(table):
+    global con
+    cur = con.cursor()
+    column_vec = []
+    while True:
+        sql = "select COLUMN_NAME from information_schema.COLUMNS where table_name = '{0}' and table_schema = '{1}'".format(table,DB)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        for data_vec in ret_data:
+            column_vec.append(data_vec[0])
+        break
+    cur.close()
+    return column_vec
+        
+#剔除重复数据        
+def main_tick_repeat_data():
+    localtime = time.localtime(time.time())
+    table = TABLE + "_" + str(localtime.tm_year)
+    global con
+    cur = con.cursor()
+    ret_map = {}
+    while True:
+        print("[tick_repeat_data] 剔除重复数据开始")
+        sql = "select f_id from {0}".format(table)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        column_vec = get_all_column_name(table)
+        if len(column_vec) == 0:
+            break
+        for id_vec in ret_data:
+            for i in range(2,len(column_vec)):
+                tick_id_date_repeat_data(table,column_vec[i],id_vec[0])
+        break
+    cur.close()
+    print("[tick_repeat_data] 剔除重复数据结束")
+
+##########################################################################剔除重复数据结束#############################################################
+
+     
 if __name__ == "__main__":
-    do_analysis_data()
-    #do_date_today()
+    begin_time = time.time()
+    while True:
+        if len(sys.argv) < 2:
+            print("[main] 参数数量不正确 {0}".format(sys.argv))
+            break
+        connect_mysql()    
+        arg = sys.argv[1]
+        if arg == "collect":
+            main_do_date_today()
+        elif arg == "analysis":
+            main_do_analysis_data()
+        elif arg == "tick":
+            main_tick_repeat_data()
+        else:
+            print("[main] 参数错误 {0} 提示 collect,analysis,tick".format(sys.argv))
+        close_mysql()
+        break
+    print("[main] 处理花费时间 {0}".format(time.time()-begin_time))
