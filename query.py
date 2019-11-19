@@ -225,7 +225,7 @@ def do_analysis_one_stock(table,id,ret_map):
                 continue_num = continue_num + 1
                 if last_win_flag:
                     win_vec = condition_vec[0]
-                    if continue_num == 1:
+                    if continue_num == 1 or len(win_vec) == 0:
                         #开始涨的日期，连涨次数
                         vec = [day_data["date"],continue_num]
                         win_vec.append(vec)
@@ -395,7 +395,7 @@ if __name__ == "__main__":
     begin_time = time.time()
     while True:
         if len(sys.argv) < 2:
-            logger.debug("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
+            print("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
             break
         connect_mysql()    
         init_log()
