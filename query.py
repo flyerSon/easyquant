@@ -8,7 +8,6 @@ import logging
 
 #数据库
 import pymysql
-'''
 HOST = "121.40.77.217"
 PORT = 3306
 USER = "flyer"
@@ -18,6 +17,7 @@ HOST = "39.98.151.63"
 PORT = 3306
 USER = "root"
 PASSWD = "123456"
+'''
 DB = "python_stock"
 CHARSET = "utf8"
 TABLE = "t_stock"
@@ -258,7 +258,7 @@ def do_analysis_one_stock(table,id,ret_map):
                         vec[1] = vec[1] + 1
                 else:
                     lose_vec = condition_vec[1]
-                    if continue_num == 1:
+                    if continue_num == 1 or len(lose_vec) == 0:
                         #开始跌的日期，连跌次数
                         vec = [day_data["date"],continue_num]
                         lose_vec.append(vec)
