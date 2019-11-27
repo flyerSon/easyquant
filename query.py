@@ -8,6 +8,7 @@ import logging
 
 #数据库
 import pymysql
+'''
 HOST = "121.40.77.217"
 PORT = 3306
 USER = "flyer"
@@ -17,7 +18,6 @@ HOST = "39.98.151.63"
 PORT = 3306
 USER = "root"
 PASSWD = "123456"
-'''
 DB = "python_stock"
 CHARSET = "utf8"
 TABLE = "t_stock"
