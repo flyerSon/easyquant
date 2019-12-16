@@ -5,6 +5,7 @@ import time
 import json
 import sys
 import logging
+import threading
 
 #数据库
 import pymysql
@@ -26,6 +27,7 @@ con = None
 logger = None
 WIN_NUM = 3 
 LOSE_NUM = 5
+threadLock = threading.Lock()
 
 
 def connect_mysql():
@@ -226,13 +228,16 @@ def do_analysis_one_stock(table,id,ret_map):
     global con
     cur = con.cursor()
     while True:
+        threadLock.acquire()
         sql = "select * from {0} where f_id = '{1}'".format(table,id)
         if cur.execute(sql) <= 0:
             break
         ret_data = cur.fetchall()
+        threadLock.release()
         continue_num,last_win_flag = 0,None
         less_price_vec = [0,0]
         max_price_vec = [0,0]
+        now_price_vec = [0,0]
         for data_vec in ret_data:
             win_vec,lose_vec = None,None
             for i in range(2,len(data_vec)):
@@ -278,11 +283,122 @@ def do_analysis_one_stock(table,id,ret_map):
                         vec = lose_vec[len(lose_vec)-1]
                         vec[1] = vec[1] + 1
                         vec[2] = day_data["date"]
+
+        if len(data_vec) > 2:
+                day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
+                day_data = day_begin_end_vec[1]
+                now_price_vec[0] = day_data["now"]
+                now_price_vec[1] = day_data["date"]
+             
         condition_vec.append(less_price_vec)
         condition_vec.append(max_price_vec)
+        condition_vec.append(now_price_vec)
         break
     cur.close()
 
+
+def thread_do_analysis_job(table,thread_id,job_list,thread_ret_map):
+    ret_vec = [False,{}]
+    ret_map = ret_vec[1]
+    for id_vec in job_list:
+        do_analysis_one_stock(table,id_vec[0],ret_map)
+    ret_vec[0] = True
+    threadLock.acquire()
+    thread_ret_map[thread_id] = ret_vec 
+    threadLock.release()
+         
+
+def thread_do_analysis(table,ret_data,thread_ret_map):
+    thread_id,job,thread_job = 1,0,[] 
+    thread_job = []
+    for i in range(len(ret_data)):
+        thread_job.append(ret_data[i])
+        job = job + 1
+        if job == 1000:
+            job_list = list(thread_job)
+            threadLock.acquire()
+            thread_ret_map[thread_id] = [False,{}]
+            threadLock.release()
+            th = threading.Thread(target=thread_do_analysis_job,args=(table,thread_id,job_list,thread_ret_map,))
+            th.start()
+            job = 0
+            thread_job = []
+            thread_id = thread_id + 1
+    if len(thread_job) > 0:
+        threadLock.acquire()
+        thread_ret_map[thread_id] = [False,{}]
+        threadLock.release()
+        th = threading.Thread(target=thread_do_analysis_job,args=(table,thread_id,job_list,thread_ret_map,))
+        th.start()
+
+
+#分析数据    
+def main_do_analysis_data():
+    localtime = time.localtime(time.time())
+    table = TABLE + "_" + str(localtime.tm_year)
+    global con
+    cur = con.cursor()
+    ret_map,thread_ret_map = {},{}
+    num = 0
+    while True:
+        logger.debug("[do_analysis_data] 分析数据开始")
+        sql = "select f_id from {0}".format(table)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        thread_do_analysis(table,ret_data,thread_ret_map)
+        while True:
+            complete_flag = True 
+            threadLock.acquire()
+            for key,ret_vec in thread_ret_map.items():
+                if not ret_vec[0]:
+                    complete_flag = False
+                    break
+            threadLock.release()
+            if not complete_flag:
+                time.sleep(2)
+            else:
+                for key,ret_vec in thread_ret_map.items():
+                    num = num + len(ret_vec[1])
+                    ret_map.update(ret_vec[1])
+                break
+        break
+    cur.close()
+    for key in ret_map:
+        condition_vec = ret_map[key]
+        logger.debug("[do_analysis_data] {0} 分析开始".format(key))
+        win_vec = condition_vec[0]
+        less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
+        if len(condition_vec) > 2:
+            less_price_vec = condition_vec[2]
+        if len(condition_vec) > 3:
+            max_price_vec = condition_vec[3]
+        if len(condition_vec) > 4:
+            now_price_vec = condition_vec[4]
+        for unit in win_vec:
+            #筛选掉价格不变的
+            if less_price_vec[0] == max_price_vec[0]:
+                continue
+            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
+            if unit[1] == WIN_NUM - 1:
+                logger.info("[do_analysis_data] 稍微注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            if unit[1] == WIN_NUM:
+                logger.warning("[do_analysis_data] 关注注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            if unit[1] > WIN_NUM:
+                logger.error("[do_analysis_data] 特别注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+        lose_vec = condition_vec[1]
+        for unit in lose_vec:
+            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            if unit[1] >= LOSE_NUM - 2 and unit[1] <= LOSE_NUM - 1:
+                logger.info("[do_analysis_data] 稍微注意连跌 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6} 当前 {7}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            if unit[1] == LOSE_NUM:
+                logger.warning("[do_analysis_data] 关注注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            if unit[1] > LOSE_NUM:
+                logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+        logger.debug("[do_analysis_data] {0} 分析结束".format(key))
+    logger.debug("[do_analysis_data] 分析 {0} 数据结束".format(num))
+
+'''
 #分析数据    
 def main_do_analysis_data():
     localtime = time.localtime(time.time())
@@ -330,6 +446,7 @@ def main_do_analysis_data():
                 logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
         logger.debug("[do_analysis_data] {0} 分析结束".format(key))
     logger.debug("[do_analysis_data] 分析 {0} 数据结束".format(num))
+'''
 
 ##########################################################################分析数据结束###############################################################
 
