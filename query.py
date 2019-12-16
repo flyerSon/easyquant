@@ -117,6 +117,7 @@ def get_same_day_all_dict_data(data_str):
             ret_vec.append(eval(data))
     return ret_vec
         
+#暂时只取最后一个值
 def get_same_day_last_data(data_str):
     ret_vec = get_same_day_all_dict_data(data_str)
     last_data = None
@@ -171,7 +172,7 @@ def main_do_date_today():
             if year == localtime.tm_year:
                 if mon == localtime.tm_mon:
                     if day != localtime.tm_mday:
-                        logger.debug("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
+                        #logger.debug("[do_date_today] 今天还没有数据 {0} {1} ".format(day,localtime.tm_mday))
                         break
             check_time = True
         if not table:
@@ -229,10 +230,11 @@ def do_analysis_one_stock(table,id,ret_map):
         if cur.execute(sql) <= 0:
             break
         ret_data = cur.fetchall()
-        continue_num,last_win_flag = 0,False
+        continue_num,last_win_flag = 0,None
         less_price_vec = [0,0]
         max_price_vec = [0,0]
         for data_vec in ret_data:
+            win_vec,lose_vec = None,None
             for i in range(2,len(data_vec)):
                 day_begin_end_vec = compare_same_data(data_vec[i],less_price_vec,max_price_vec)
                 if not day_begin_end_vec:
@@ -244,27 +246,38 @@ def do_analysis_one_stock(table,id,ret_map):
                 condition_vec = ret_map[day_data["name"]]
                 #如果上次跟这次涨跌情形不一致，则置0
                 if day_begin_end_vec[0] != last_win_flag:
-                    last_win_flag = day_begin_end_vec[0]
                     continue_num = 0
                 continue_num = continue_num + 1
-                if last_win_flag:
+                if win_vec is None:
                     win_vec = condition_vec[0]
-                    if continue_num == 1 or len(win_vec) == 0:
+                if lose_vec is None:
+                    lose_vec = condition_vec[1]
+                if continue_num == 1:
+                    if day_begin_end_vec[0]:
                         #开始涨的日期，连涨次数
-                        vec = [day_data["date"],continue_num]
+                        vec = [day_data["date"],continue_num,day_data["date"]]
                         win_vec.append(vec)
                     else:
+                        #开始跌的日期，连跌次数
+                        vec = [day_data["date"],continue_num,day_data["date"]]
+                        lose_vec.append(vec)
+                    if not last_win_flag is None:
+                        if day_begin_end_vec[0]:
+                            vec = lose_vec[len(lose_vec)-1]
+                            vec[2] = day_data["date"]
+                        else:
+                            vec = win_vec[len(win_vec)-1]
+                            vec[2] = day_data["date"]
+                    last_win_flag = day_begin_end_vec[0]
+                else:
+                    if day_begin_end_vec[0]:
                         vec = win_vec[len(win_vec)-1]
                         vec[1] = vec[1] + 1
-                else:
-                    lose_vec = condition_vec[1]
-                    if continue_num == 1 or len(lose_vec) == 0:
-                        #开始跌的日期，连跌次数
-                        vec = [day_data["date"],continue_num]
-                        lose_vec.append(vec)
+                        vec[2] = day_data["date"]
                     else:
                         vec = lose_vec[len(lose_vec)-1]
-                        vec[1] = vec[1] + 1    
+                        vec[1] = vec[1] + 1
+                        vec[2] = day_data["date"]
         condition_vec.append(less_price_vec)
         condition_vec.append(max_price_vec)
         break
@@ -301,20 +314,20 @@ def main_do_analysis_data():
         for unit in win_vec:
             logger.debug("[do_analysis_data] {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
             if unit[1] == WIN_NUM - 1:
-                logger.info("[do_analysis_data] 稍微注意连涨 {0} 从 {1} 开始连续涨 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+                logger.info("[do_analysis_data] 稍微注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
             if unit[1] == WIN_NUM:
-                logger.warning("[do_analysis_data] 关注注意连涨 {0} 从 {1} 开始连续涨 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+                logger.warning("[do_analysis_data] 关注注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
             if unit[1] > WIN_NUM:
-                logger.error("[do_analysis_data] 特别注意连涨 {0} 从 {1} 开始连续涨 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+                logger.error("[do_analysis_data] 特别注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
         lose_vec = condition_vec[1]
         for unit in lose_vec:
-            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
             if unit[1] >= LOSE_NUM - 2 and unit[1] <= LOSE_NUM - 1:
                 logger.info("[do_analysis_data] 稍微注意连跌 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
             if unit[1] == LOSE_NUM:
-                logger.warning("[do_analysis_data] 关注注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+                logger.warning("[do_analysis_data] 关注注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
             if unit[1] > LOSE_NUM:
-                logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
+                logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
         logger.debug("[do_analysis_data] {0} 分析结束".format(key))
     logger.debug("[do_analysis_data] 分析 {0} 数据结束".format(num))
 
