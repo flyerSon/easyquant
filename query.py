@@ -5,16 +5,10 @@ import time
 import json
 import sys
 import logging
-import threading
+import os
 
 #数据库
 import pymysql
-'''
-HOST = "121.40.77.217"
-PORT = 3306
-USER = "flyer"
-PASSWD = "flyer"
-'''
 HOST = "39.98.151.63"
 PORT = 3306
 USER = "root"
@@ -23,11 +17,18 @@ DB = "python_stock"
 CHARSET = "utf8"
 TABLE = "t_stock"
 DATE = "f_"
+LOG_FILE = None
 con = None
 logger = None
 WIN_NUM = 3 
 LOSE_NUM = 5
+HISTORY_MAP = {}
+INTEREST_LIST = None
+
+'''
+import threading
 threadLock = threading.Lock()
+'''
 
 
 def connect_mysql():
@@ -134,7 +135,9 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
         cur = con.cursor()
         sql = 'insert into {0} (f_id, f_name,{1})values("{2}","{3}","{4}")'.format(table,date,id,name,data)
         if cur.execute(sql) == 1:
-            logger.debug("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+            #logger.debug("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+            print("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+        cur.c
         cur.close()
     else:
         add_flag = False
@@ -151,10 +154,14 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
             cur = con.cursor()
             sql = 'update {0} set {1} = "{2}" where f_id = "{3}"'.format(table,date,cur_data,id)
             if cur.execute(sql) == 1:
-                logger.debug("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+                #logger.debug("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+                print("[insert_or_update_id_data] 更新成功 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
             cur.close()
         else:
-            logger.debug("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+            #logger.debug("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+            print("[insert_or_update_id_data] 数据重复，不用更新 {0},{1} {2}".format(name,dict_data["date"],dict_data["time"]))
+  
+
   
 #处理当天所有的股票数据
 def main_do_date_today():
@@ -223,8 +230,162 @@ def compare_same_data(data_str,less_price_vec,max_price_vec):
         if begin_end_vec[1]["now"] > begin_end_vec[1]["open"] and begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
             begin_end_vec[0] = True
     return begin_end_vec
-    
+
+
+#加载历史数据
+def do_load_history_price():
+    global HISTORY_MAP
+    if HISTORY_MAP is None:
+        out_file = "./history_log/" + "history.txt"
+        fp = open(out_file,"r")
+        line = fp.readline()
+        while line:
+            i = 0
+            unit_vec = line.split(",")
+            name,id,less_price_vec,max_price_vec = None,None,None,None
+            for unit in unit_vec:
+                vec = unit.split(":")
+                if i == 0:
+                    name = vec[1]
+                elif i == 1:
+                    id = vec[1]
+                elif i == 2:
+                    less_price_vec = [float(vec[1])]
+                elif i == 3:
+                    less_price_vec.append(vec[1])
+                elif i == 4:
+                    max_price_vec = [float(vec[1])]
+                elif i == 5:
+                    max_price_vec.append(vec[1])
+                    HISTORY_MAP[id] = [less_price_vec,max_price_vec,name]
+            i = i + 1
+            line = fp.readline()
+        fp.close()
+        logger.debug("[do_load_history_price] 加载历史数据 {0}".format(len(HISTORY_MAP)))
+
+#生成历史数据
+def do_write_history_price(ret_map):
+    localtime = time.localtime(time.time())
+    date = str(localtime.tm_mon) + "_" + str(localtime.tm_mday)
+    out_file = "./history_log/" + date + "_history.txt"
+    fp = open(out_file,"w")
+    for key in ret_map:
+        condition_vec = ret_map[key]
+        less_price_vec,max_price_vec,id = None,None,None
+        if len(condition_vec) > 1:
+            less_price_vec = condition_vec[1]
+        if len(condition_vec) > 2:
+            max_price_vec = condition_vec[2]
+        if len(condition_vec) > 4:
+            id = condition_vec[4]
+        if less_price_vec and max_price_vec and id:
+            history_price = "股票名字:{0},股票id:{1},最低价:{2},日期:{3},最高价:{4},日期:{5}\n".format(key,id,less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1])
+            fp.write(history_price)
+    fp.close()
+    price_file = "./history_log/" + "history.txt"
+    command = 'cp -rf {0} {1}'.format(out_file,price_file) 
+    os.system(command)
+    logger.debug("[do_write_history_price] 生成历史数据 {0}".format(len(ret_map)))
+
 def do_analysis_one_stock(table,id,ret_map):
+    global con
+    cur = con.cursor()
+    while True:
+        sql = "select * from {0} where f_id = '{1}'".format(table,id)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        continue_num,last_win_flag,ret_vec = 0,None,None
+        less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
+        if id in HISTORY_MAP:
+            unit = HISTORY_MAP[id]
+            less_price_vec = unit[0]
+            max_price_vec = unit[1]
+        for data_vec in ret_data:
+            begin_pos = 2
+            if len(data_vec) > 30:
+                begin_pos = len(data_vec) - 30
+                if begin_pos < 2:
+                    begin_pos = 2
+            for i in range(begin_pos,len(data_vec)):
+                day_begin_end_vec = compare_same_data(data_vec[i],less_price_vec,max_price_vec)
+                if not day_begin_end_vec:
+                    continue
+                day_data = day_begin_end_vec[1]
+                if not day_data["name"] in ret_map:
+                    condition_vec = [[]] 
+                    ret_map[day_data["name"]] = condition_vec
+                condition_vec = ret_map[day_data["name"]]
+                if ret_vec is None:
+                    ret_vec = condition_vec[0] 
+                up_flag = day_begin_end_vec[0]
+                if last_win_flag is None:
+                    #开始涨或者跌的日期，连涨次数
+                    vec = [up_flag,day_data["date"],1,day_data["date"]]
+                    ret_vec.append(vec)
+                else:
+                    last_vec = ret_vec[len(ret_vec) - 1]
+                    #记住最后一次涨跌结束的时间
+                    if up_flag != last_win_flag:
+                        last_vec[3] = day_data["date"]
+                        #开始涨或者跌的日期，连涨次数
+                        vec = [up_flag,day_data["date"],1,day_data["date"]]
+                        ret_vec.append(vec)
+                    else:
+                        #连涨或者连跌
+                        last_vec[2] = last_vec[2] + 1
+                        last_vec[3] = day_data["date"]
+                last_win_flag = up_flag
+        if len(data_vec) > 2:
+                day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
+                day_data = day_begin_end_vec[1]
+                now_price_vec[0] = day_data["now"]
+                now_price_vec[1] = day_data["date"]
+             
+        condition_vec.append(less_price_vec)
+        condition_vec.append(max_price_vec)
+        condition_vec.append(now_price_vec)
+        condition_vec.append(id)
+        break
+    cur.close()
+
+
+'''
+#多线程分析数据    
+def main_do_analysis_data_thread():
+    localtime = time.localtime(time.time())
+    table = TABLE + "_" + str(localtime.tm_year)
+    global con
+    cur = con.cursor()
+    ret_map,thread_ret_map = {},{}
+    num = 0
+    while True:
+        logger.debug("[do_analysis_data] 分析数据开始")
+        sql = "select f_id from {0}".format(table)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        thread_do_analysis(table,ret_data,thread_ret_map)
+        while True:
+            complete_flag = True 
+            threadLock.acquire()
+            for key,ret_vec in thread_ret_map.items():
+                if not ret_vec[0]:
+                    complete_flag = False
+                    break
+            threadLock.release()
+            if not complete_flag:
+                time.sleep(2)
+            else:
+                for key,ret_vec in thread_ret_map.items():
+                    num = num + len(ret_vec[1])
+                    ret_map.update(ret_vec[1])
+                break
+        break
+    cur.close()
+    do_log_analysis(ret_map)
+
+def do_analysis_one_stock_thread(table,id,ret_map):
     global con
     cur = con.cursor()
     while True:
@@ -296,12 +457,11 @@ def do_analysis_one_stock(table,id,ret_map):
         break
     cur.close()
 
-
 def thread_do_analysis_job(table,thread_id,job_list,thread_ret_map):
     ret_vec = [False,{}]
     ret_map = ret_vec[1]
     for id_vec in job_list:
-        do_analysis_one_stock(table,id_vec[0],ret_map)
+        do_analysis_one_stock_thread(table,id_vec[0],ret_map)
     ret_vec[0] = True
     threadLock.acquire()
     thread_ret_map[thread_id] = ret_vec 
@@ -314,6 +474,8 @@ def thread_do_analysis(table,ret_data,thread_ret_map):
     for i in range(len(ret_data)):
         thread_job.append(ret_data[i])
         job = job + 1
+        if job >= 10:
+            break
         if job == 1000:
             job_list = list(thread_job)
             threadLock.acquire()
@@ -328,79 +490,87 @@ def thread_do_analysis(table,ret_data,thread_ret_map):
         threadLock.acquire()
         thread_ret_map[thread_id] = [False,{}]
         threadLock.release()
-        th = threading.Thread(target=thread_do_analysis_job,args=(table,thread_id,job_list,thread_ret_map,))
+        th = threading.Thread(target=thread_do_analysis_job,args=(table,thread_id,thread_job,thread_ret_map,))
         th.start()
 
+'''
 
-#分析数据    
-def main_do_analysis_data():
-    localtime = time.localtime(time.time())
-    table = TABLE + "_" + str(localtime.tm_year)
-    global con
-    cur = con.cursor()
-    ret_map,thread_ret_map = {},{}
-    num = 0
-    while True:
-        logger.debug("[do_analysis_data] 分析数据开始")
-        sql = "select f_id from {0}".format(table)
-        if cur.execute(sql) <= 0:
-            break
-        ret_data = cur.fetchall()
-        thread_do_analysis(table,ret_data,thread_ret_map)
-        while True:
-            complete_flag = True 
-            threadLock.acquire()
-            for key,ret_vec in thread_ret_map.items():
-                if not ret_vec[0]:
-                    complete_flag = False
-                    break
-            threadLock.release()
-            if not complete_flag:
-                time.sleep(2)
-            else:
-                for key,ret_vec in thread_ret_map.items():
-                    num = num + len(ret_vec[1])
-                    ret_map.update(ret_vec[1])
-                break
-        break
-    cur.close()
+#拼凑输出字符串
+def get_log_format(arg_map):
+    log_ret = ("[do_analysis_data] {0}{1} 从 {2} 开始连续{3} {4} 次 到 {5} 结束 最低 {6} {7} 最高 {8} {9} 当前 {10}".format(arg_map["prefix"],arg_map["name"],arg_map["begin"],arg_map["up"],arg_map["cnt"],arg_map["end"],arg_map["less"],arg_map["less_date"],arg_map["max"],arg_map["max_date"],arg_map["now"]))
+    return log_ret
+
+
+#输出分析结果到日志
+def do_log_analysis(ret_map):
     for key in ret_map:
         condition_vec = ret_map[key]
         logger.debug("[do_analysis_data] {0} 分析开始".format(key))
-        win_vec = condition_vec[0]
+        vec = condition_vec[0]
         less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
+        if len(condition_vec) > 1:
+            less_price_vec = condition_vec[1]
         if len(condition_vec) > 2:
-            less_price_vec = condition_vec[2]
+            max_price_vec = condition_vec[2]
         if len(condition_vec) > 3:
-            max_price_vec = condition_vec[3]
-        if len(condition_vec) > 4:
-            now_price_vec = condition_vec[4]
-        for unit in win_vec:
+            now_price_vec = condition_vec[3]
+        for unit in vec:
             #筛选掉价格不变的
             if less_price_vec[0] == max_price_vec[0]:
                 continue
-            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
-            if unit[1] == WIN_NUM - 1:
-                logger.info("[do_analysis_data] 稍微注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-            if unit[1] == WIN_NUM:
-                logger.warning("[do_analysis_data] 关注注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-            if unit[1] > WIN_NUM:
-                logger.error("[do_analysis_data] 特别注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-        lose_vec = condition_vec[1]
-        for unit in lose_vec:
-            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-            if unit[1] >= LOSE_NUM - 2 and unit[1] <= LOSE_NUM - 1:
-                logger.info("[do_analysis_data] 稍微注意连跌 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6} 当前 {7}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-            if unit[1] == LOSE_NUM:
-                logger.warning("[do_analysis_data] 关注注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-            if unit[1] > LOSE_NUM:
-                logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7} 当前 {8}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
+            cnt = unit[2]
+            print("cnt:",cnt)
+            arg_map = {}
+            arg_map["name"] = key
+            arg_map["prefix"] = ""
+            arg_map["up"] = ""
+            arg_map["begin"] = unit[1] 
+            arg_map["end"] = unit[3] 
+            arg_map["cnt"] = cnt 
+            arg_map["less"] = less_price_vec[0] 
+            arg_map["less_date"] = less_price_vec[1]
+            arg_map["max"] = max_price_vec[0] 
+            arg_map["max_date"] = max_price_vec[1] 
+            arg_map["now"] = now_price_vec[0] 
+            log_level = 0
+            if unit[0]:
+                arg_map["up"] = "涨"
+                if cnt == WIN_NUM - 1:
+                    log_level = 1
+                    arg_map["prefix"] = "稍微注意连涨 "
+                elif cnt == WIN_NUM:
+                    arg_map["prefix"] = "关注注意连涨 "
+                    log_level = 2
+                elif cnt > WIN_NUM:
+                    arg_map["prefix"] = "特别注意连涨 "
+                    log_level = 3
+            else:
+                arg_map["up"] = "跌"
+                if cnt >= LOSE_NUM - 2 and cnt <= LOSE_NUM - 1:
+                    arg_map["prefix"] = "稍微注意连跌 "
+                    log_level = 1
+                elif cnt == LOSE_NUM:
+                    arg_map["prefix"] = "关注注意连跌 "
+                    log_level = 2
+                elif cnt > LOSE_NUM:
+                    arg_map["prefix"] = "特别注意连跌 "
+                    log_level = 3
+            log_ret = get_log_format(arg_map)
+            if log_level == 0:
+                logger.debug(log_ret)
+            elif log_level == 1:
+                logger.info(log_ret)
+            elif log_level == 2:
+                logger.warning(log_ret)
+            else:
+                logger.error(log_ret)
         logger.debug("[do_analysis_data] {0} 分析结束".format(key))
-    logger.debug("[do_analysis_data] 分析 {0} 数据结束".format(num))
 
-'''
 #分析数据    
 def main_do_analysis_data():
+    #加载历史数据
+    do_load_history_price()
+
     localtime = time.localtime(time.time())
     table = TABLE + "_" + str(localtime.tm_year)
     global con
@@ -418,35 +588,9 @@ def main_do_analysis_data():
             num = num + 1
         break
     cur.close()
-    for key in ret_map:
-        condition_vec = ret_map[key]
-        logger.debug("[do_analysis_data] {0} 分析开始".format(key))
-        win_vec = condition_vec[0]
-        less_price_vec,max_price_vec = [0,0],[0,0]
-        if len(condition_vec) > 2:
-            less_price_vec = condition_vec[2]
-        if len(condition_vec) > 3:
-            max_price_vec = condition_vec[3]
-        for unit in win_vec:
-            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续涨 {2} 次".format(key,unit[0],unit[1]))
-            if unit[1] == WIN_NUM - 1:
-                logger.info("[do_analysis_data] 稍微注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-            if unit[1] == WIN_NUM:
-                logger.warning("[do_analysis_data] 关注注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-            if unit[1] > WIN_NUM:
-                logger.error("[do_analysis_data] 特别注意连涨 {0} 从 {1} 开始连续涨 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-        lose_vec = condition_vec[1]
-        for unit in lose_vec:
-            logger.debug("[do_analysis_data] {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-            if unit[1] >= LOSE_NUM - 2 and unit[1] <= LOSE_NUM - 1:
-                logger.info("[do_analysis_data] 稍微注意连跌 {0} 从 {1} 开始连续跌 {2} 次 最低 {3} {4} 最高 {5} {6}".format(key,unit[0],unit[1],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-            if unit[1] == LOSE_NUM:
-                logger.warning("[do_analysis_data] 关注注意连跌 股票 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-            if unit[1] > LOSE_NUM:
-                logger.error("[do_analysis_data] 特别注意连跌 {0} 从 {1} 开始连续跌 {2} 次 到 {3} 结束 最低 {4} {5} 最高 {6} {7}".format(key,unit[0],unit[1],unit[2],less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1]))
-        logger.debug("[do_analysis_data] {0} 分析结束".format(key))
+    do_log_analysis(ret_map)
+    do_write_history_price(ret_map)
     logger.debug("[do_analysis_data] 分析 {0} 数据结束".format(num))
-'''
 
 ##########################################################################分析数据结束###############################################################
 
@@ -536,8 +680,10 @@ def init_log():
     logger = logging.getLogger("logger")
     logger.setLevel(logging.DEBUG)
 
-    log_file = "./history_log/" + date + ".log"
-    fh = logging.FileHandler(log_file)
+    global LOG_FILE
+    if LOG_FILE is None:
+        LOG_FILE = "./history_log/" + date + ".log"
+    fh = logging.FileHandler(LOG_FILE)
     fh.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
@@ -551,12 +697,51 @@ def init_log():
     logger.addHandler(ch)
 
 
+#初始化兴趣列表
+def init_interest_list():
+    global INTEREST_LIST 
+    if INTEREST_LIST is None:
+        INTEREST_LIST = ["世纪华通","巨人网络","东睦股份","恺英网络","游族网络","光线传媒","菲利华"]
+
+#抓取对应的日志
+def do_interest(name,out):
+    command = 'cat {0} | grep {1} >> {2}'.format(LOG_FILE,name,out)
+    os.system(command)
+
+#抓取对应的日志
+def do_attention(attention_level):
+    name = None
+    if attention_level == 1:
+        name = "关注注意连涨"
+    elif attention_level == 2:
+        name = "特别注意连涨"
+    elif attention_level == 3:
+        name = "关注注意连跌"
+    elif attention_level == 4:
+        name = "特别注意连跌"
+    else:
+        print("[do_attention] 参数错误 {0} ".format(attention_level))
+    if not name is None:
+        localtime = time.localtime(time.time())
+        date = str(localtime.tm_mon) + "_" + str(localtime.tm_mday)
+        out = "./history_log/" + date + "_{0}.log".format(name)
+        do_interest(name,out)
+        print("[do_attention] 提取股票完成 {0} ".format(name))
+
+def main_do_interest():
+    init_interest_list()
+    localtime = time.localtime(time.time())
+    date = str(localtime.tm_mon) + "_" + str(localtime.tm_mday)
+    out = "./history_log/" + date + "_interest.log"
+    for name in INTEREST_LIST:
+        do_interest(name,out)
+    print("[main_do_interest] 提取兴趣股票完成 {0} 只".format(len(INTEREST_LIST)))
      
 if __name__ == "__main__":
     begin_time = time.time()
     while True:
         if len(sys.argv) < 2:
-            print("[main] 参数数量不正确 {0} 提示 collect,analysis,tick".format(sys.argv))
+            print("[main] 参数数量不正确 {0} 提示 collect,analysis,tick,interest,attention".format(sys.argv))
             break
         connect_mysql()    
         init_log()
@@ -567,8 +752,17 @@ if __name__ == "__main__":
             main_do_analysis_data()
         elif arg == "tick":
             main_tick_repeat_data()
+        elif arg == "interest":
+            main_do_interest()
+        elif arg == "attention":
+            level = int(sys.argv[2])
+            if level == 0:
+                for i in range(1,5):
+                    do_attention(i)
+            else:
+                do_attention(int(level))
         else:
-            logger.debug("[main] 参数错误 {0} 提示 collect,analysis,tick".format(sys.argv))
+            print("[main] 参数错误 {0} 提示 collect,analysis,tick,interest,attention".format(sys.argv))
         close_mysql()
         break
     logger.debug("[main] 处理花费时间 {0} 秒".format(time.time()-begin_time))
