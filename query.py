@@ -227,8 +227,12 @@ def compare_same_data(data_str,less_price_vec,max_price_vec):
     if len(ret_vec) > 0:
         begin_end_vec = [False,ret_vec[len(ret_vec)-1]]
         #现价大于今日开盘价和大于昨日收盘价
+        if begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
+            begin_end_vec[0] = True
+        '''
         if begin_end_vec[1]["now"] > begin_end_vec[1]["open"] and begin_end_vec[1]["now"] > begin_end_vec[1]["close"]:
             begin_end_vec[0] = True
+        '''
     return begin_end_vec
 
 
@@ -287,6 +291,8 @@ def do_write_history_price(ret_map):
     os.system(command)
     logger.debug("[do_write_history_price] 生成历史数据 {0}".format(len(ret_map)))
 
+
+#现价大于昨日收盘价才算涨
 def do_analysis_one_stock(table,id,ret_map):
     global con
     cur = con.cursor()
@@ -303,8 +309,8 @@ def do_analysis_one_stock(table,id,ret_map):
             max_price_vec = unit[1]
         for data_vec in ret_data:
             begin_pos = 2
-            if len(data_vec) > 30:
-                begin_pos = len(data_vec) - 30
+            if len(data_vec) > 10:
+                begin_pos = len(data_vec) - 10
                 if begin_pos < 2:
                     begin_pos = 2
             for i in range(begin_pos,len(data_vec)):
@@ -320,21 +326,20 @@ def do_analysis_one_stock(table,id,ret_map):
                     ret_vec = condition_vec[0] 
                 up_flag = day_begin_end_vec[0]
                 if last_win_flag is None:
-                    #开始涨或者跌的日期，连涨次数
-                    vec = [up_flag,day_data["date"],1,day_data["date"]]
+                    #开始涨或者跌的日期,上日收盘价,连涨次数,结束日期,结束现价
+                    vec = [up_flag,day_data["date"],day_data["close"],1,day_data["date"],day_data["now"]]
                     ret_vec.append(vec)
                 else:
                     last_vec = ret_vec[len(ret_vec) - 1]
                     #记住最后一次涨跌结束的时间
                     if up_flag != last_win_flag:
-                        last_vec[3] = day_data["date"]
-                        #开始涨或者跌的日期，连涨次数
-                        vec = [up_flag,day_data["date"],1,day_data["date"]]
+                        vec = [up_flag,day_data["date"],day_data["close"],1,day_data["date"],day_data["now"]]
                         ret_vec.append(vec)
                     else:
                         #连涨或者连跌
-                        last_vec[2] = last_vec[2] + 1
-                        last_vec[3] = day_data["date"]
+                        last_vec[3] = last_vec[3] + 1
+                        last_vec[4] = day_data["date"]
+                        last_vec[5] = day_data["now"]
                 last_win_flag = up_flag
         if len(data_vec) > 2:
                 day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
@@ -494,6 +499,11 @@ def thread_do_analysis(table,ret_data,thread_ret_map):
         th.start()
 
 '''
+#拼凑输出字符串
+def get_log_format_change(arg_map):
+    log_ret = ("[do_analysis_data] {0}{1} 从 {2} {3} 开始连续{4} {5} 次 到 {6} {7} 结束".format(arg_map["prefix"],arg_map["name"],arg_map["begin_date"],arg_map["begin"],arg_map["up"],arg_map["cnt"],arg_map["end_date"],arg_map["end"]))
+    return log_ret
+
 
 #拼凑输出字符串
 def get_log_format(arg_map):
@@ -505,7 +515,6 @@ def get_log_format(arg_map):
 def do_log_analysis(ret_map):
     for key in ret_map:
         condition_vec = ret_map[key]
-        logger.debug("[do_analysis_data] {0} 分析开始".format(key))
         vec = condition_vec[0]
         less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
         if len(condition_vec) > 1:
@@ -514,18 +523,20 @@ def do_log_analysis(ret_map):
             max_price_vec = condition_vec[2]
         if len(condition_vec) > 3:
             now_price_vec = condition_vec[3]
+        logger.debug("[do_analysis_data] {0} 分析开始 最低 {1} {2} 最高 {3} {4} 当前 {5}".format(key,less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
         for unit in vec:
             #筛选掉价格不变的
             if less_price_vec[0] == max_price_vec[0]:
                 continue
-            cnt = unit[2]
-            print("cnt:",cnt)
+            cnt = unit[3]
             arg_map = {}
             arg_map["name"] = key
             arg_map["prefix"] = ""
             arg_map["up"] = ""
-            arg_map["begin"] = unit[1] 
-            arg_map["end"] = unit[3] 
+            arg_map["begin_date"] = unit[1] 
+            arg_map["end_date"] = unit[4] 
+            arg_map["begin"] = unit[2] 
+            arg_map["end"] = unit[5] 
             arg_map["cnt"] = cnt 
             arg_map["less"] = less_price_vec[0] 
             arg_map["less_date"] = less_price_vec[1]
@@ -555,7 +566,7 @@ def do_log_analysis(ret_map):
                 elif cnt > LOSE_NUM:
                     arg_map["prefix"] = "特别注意连跌 "
                     log_level = 3
-            log_ret = get_log_format(arg_map)
+            log_ret = get_log_format_change(arg_map)
             if log_level == 0:
                 logger.debug(log_ret)
             elif log_level == 1:
@@ -746,6 +757,7 @@ if __name__ == "__main__":
         connect_mysql()    
         init_log()
         arg = sys.argv[1]
+        logger.debug("[main] 开始处理指令 {0}".format(arg))
         if arg == "collect":
             main_do_date_today()
         elif arg == "analysis":
@@ -765,4 +777,4 @@ if __name__ == "__main__":
             print("[main] 参数错误 {0} 提示 collect,analysis,tick,interest,attention".format(sys.argv))
         close_mysql()
         break
-    logger.debug("[main] 处理花费时间 {0} 秒".format(time.time()-begin_time))
+    logger.debug("[main] 处理指令 {0} 花费时间 {1} 秒".format(arg,time.time()-begin_time))
