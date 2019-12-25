@@ -6,6 +6,7 @@ import json
 import sys
 import logging
 import os
+from datetime import datetime,timedelta
 
 #数据库
 import pymysql
@@ -24,6 +25,11 @@ WIN_NUM = 3
 LOSE_NUM = 5
 HISTORY_MAP = {}
 INTEREST_LIST = None
+
+#默认只分析10天的数据
+DAY_NUM = 10
+#分析日志只输出价格小于20的
+MAX_PRICE = 20
 
 '''
 import threading
@@ -291,7 +297,7 @@ def do_write_history_price(ret_map):
     os.system(command)
     logger.debug("[do_write_history_price] 生成历史数据 {0}".format(len(ret_map)))
 
-
+'''
 #现价大于昨日收盘价才算涨
 def do_analysis_one_stock(table,id,ret_map):
     global con
@@ -309,11 +315,80 @@ def do_analysis_one_stock(table,id,ret_map):
             max_price_vec = unit[1]
         for data_vec in ret_data:
             begin_pos = 2
-            if len(data_vec) > 10:
-                begin_pos = len(data_vec) - 10
+            if len(data_vec) > DAY_NUM:
+                begin_pos = len(data_vec) - DAY_NUM
                 if begin_pos < 2:
                     begin_pos = 2
             for i in range(begin_pos,len(data_vec)):
+                day_begin_end_vec = compare_same_data(data_vec[i],less_price_vec,max_price_vec)
+                if not day_begin_end_vec:
+                    continue
+                day_data = day_begin_end_vec[1]
+                if not day_data["name"] in ret_map:
+                    condition_vec = [[]] 
+                    ret_map[day_data["name"]] = condition_vec
+                condition_vec = ret_map[day_data["name"]]
+                if ret_vec is None:
+                    ret_vec = condition_vec[0] 
+                up_flag = day_begin_end_vec[0]
+                if last_win_flag is None:
+                    #开始涨或者跌的日期,上日收盘价,连涨次数,结束日期,结束现价
+                    vec = [up_flag,day_data["date"],day_data["close"],1,day_data["date"],day_data["now"]]
+                    ret_vec.append(vec)
+                else:
+                    last_vec = ret_vec[len(ret_vec) - 1]
+                    #记住最后一次涨跌结束的时间
+                    if up_flag != last_win_flag:
+                        vec = [up_flag,day_data["date"],day_data["close"],1,day_data["date"],day_data["now"]]
+                        ret_vec.append(vec)
+                    else:
+                        #连涨或者连跌
+                        last_vec[3] = last_vec[3] + 1
+                        last_vec[4] = day_data["date"]
+                        last_vec[5] = day_data["now"]
+                last_win_flag = up_flag
+        if len(data_vec) > 2:
+                day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
+                day_data = day_begin_end_vec[1]
+                now_price_vec[0] = day_data["now"]
+                now_price_vec[1] = day_data["date"]
+             
+        condition_vec.append(less_price_vec)
+        condition_vec.append(max_price_vec)
+        condition_vec.append(now_price_vec)
+        condition_vec.append(id)
+        break
+    cur.close()
+'''
+
+
+
+
+#现价大于昨日收盘价才算涨
+def do_analysis_one_stock(table,id,ret_map):
+    global con
+    cur = con.cursor()
+    while True:
+        #非跨表
+        sql,change_table_flag = get_select_sql(table,id,False)
+        if cur.execute(sql) <= 0:
+            break
+        ret_data = cur.fetchall()
+        #跨表
+        if change_table_flag:
+            sql,_ = get_select_sql(table,id,True)
+            if cur.execute(sql) <= 0:
+                break
+            ret_data = ret_data + cur.fetchall()
+        continue_num,last_win_flag,ret_vec = 0,None,None
+        less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
+        if id in HISTORY_MAP:
+            unit = HISTORY_MAP[id]
+            less_price_vec = unit[0]
+            max_price_vec = unit[1]
+        for data_vec in ret_data:
+            #range是前闭后开集合
+            for i in range(0,len(data_vec)):
                 day_begin_end_vec = compare_same_data(data_vec[i],less_price_vec,max_price_vec)
                 if not day_begin_end_vec:
                     continue
@@ -523,6 +598,8 @@ def do_log_analysis(ret_map):
             max_price_vec = condition_vec[2]
         if len(condition_vec) > 3:
             now_price_vec = condition_vec[3]
+        if now_price_vec[0] >= MAX_PRICE:
+            continue
         logger.debug("[do_analysis_data] {0} 分析开始 最低 {1} {2} 最高 {3} {4} 当前 {5}".format(key,less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
         for unit in vec:
             #筛选掉价格不变的
@@ -747,7 +824,38 @@ def main_do_interest():
     for name in INTEREST_LIST:
         do_interest(name,out)
     print("[main_do_interest] 提取兴趣股票完成 {0} 只".format(len(INTEREST_LIST)))
-     
+
+def get_select_sql(now_table,id,change_table_flag):
+    ret = False
+    sql = "select "  
+    today = datetime.now()
+    size,i,column_vec,table = 0,0,[],None
+    while size < DAY_NUM and i < 3 * DAY_NUM:
+        day = datetime.strftime(datetime.now() - timedelta(i), '%Y_%m_%d')
+        vec = day.split("_")
+        if len(vec) >= 3:
+            column = DATE + vec[1] + "_" + vec[2] 
+            table = TABLE + "_" + vec[0]
+            if not change_table_flag:
+                if table == now_table:
+                    if check_date_column(table,column):
+                        column_vec.append(column)
+                        size = size + 1
+                else:
+                    ret = True
+            else:
+                if table != now_table:
+                    if check_date_column(table,column):
+                        column_vec.append(column)
+                        size = size + 1
+        i = i + 1
+    for i in range(0,len(column_vec)):
+        if i >= 1:
+            sql = sql + ","
+        sql = sql + column_vec[len(column_vec) - i - 1] 
+    sql = sql + " from {0} where f_id = '{1}'".format(table,id)
+    return sql,ret
+                
 if __name__ == "__main__":
     begin_time = time.time()
     while True:
@@ -761,6 +869,12 @@ if __name__ == "__main__":
         if arg == "collect":
             main_do_date_today()
         elif arg == "analysis":
+            main_do_analysis_data()
+        elif arg == "analysis_week":
+            DAY_NUM = 7
+            main_do_analysis_data()
+        elif arg == "analysis_month":
+            DAY_NUM = 30
             main_do_analysis_data()
         elif arg == "tick":
             main_tick_repeat_data()
