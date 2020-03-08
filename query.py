@@ -140,10 +140,12 @@ def insert_or_update_id_data(table,date,id,name,dict_data):
     if not check_id_data(table,id):
         cur = con.cursor()
         sql = 'insert into {0} (f_id, f_name,{1})values("{2}","{3}","{4}")'.format(table,date,id,name,data)
-        if cur.execute(sql) == 1:
-            #logger.debug("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
-            print("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
-        cur.c
+        try:
+            if cur.execute(sql) == 1:
+                #logger.debug("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+                print("[insert_or_update_id_data] 插入成功 {0},{1}".format(name,dict_data["date"]))
+        except:
+            print("[insert_or_update_id_data] 插入失败 {0},{1},{2}".format(name,dict_data["date"],sql))
         cur.close()
     else:
         add_flag = False
@@ -379,7 +381,7 @@ def do_analysis_one_stock(table,id,ret_map):
             sql,_ = get_select_sql(table,id,True)
             if cur.execute(sql) <= 0:
                 break
-            ret_data = ret_data + cur.fetchall()
+            ret_data = cur.fetchall() + ret_data
         continue_num,last_win_flag,ret_vec = 0,None,None
         less_price_vec,max_price_vec,now_price_vec = [0,0],[0,0],[0,0]
         if id in HISTORY_MAP:
@@ -418,9 +420,10 @@ def do_analysis_one_stock(table,id,ret_map):
                 last_win_flag = up_flag
         if len(data_vec) > 2:
                 day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
-                day_data = day_begin_end_vec[1]
-                now_price_vec[0] = day_data["now"]
-                now_price_vec[1] = day_data["date"]
+                if day_begin_end_vec is not None:
+                    day_data = day_begin_end_vec[1]
+                    now_price_vec[0] = day_data["now"]
+                    now_price_vec[1] = day_data["date"]
              
         condition_vec.append(less_price_vec)
         condition_vec.append(max_price_vec)
@@ -527,9 +530,10 @@ def do_analysis_one_stock_thread(table,id,ret_map):
 
         if len(data_vec) > 2:
                 day_begin_end_vec = compare_same_data(data_vec[len(data_vec) - 1],less_price_vec,max_price_vec)
-                day_data = day_begin_end_vec[1]
-                now_price_vec[0] = day_data["now"]
-                now_price_vec[1] = day_data["date"]
+                if day_begin_end_vec is not None:
+                    day_data = day_begin_end_vec[1]
+                    now_price_vec[0] = day_data["now"]
+                    now_price_vec[1] = day_data["date"]
              
         condition_vec.append(less_price_vec)
         condition_vec.append(max_price_vec)
@@ -601,7 +605,12 @@ def do_log_analysis(ret_map):
         if now_price_vec[0] >= MAX_PRICE:
             continue
         logger.debug("[do_analysis_data] {0} 分析开始 最低 {1} {2} 最高 {3} {4} 当前 {5}".format(key,less_price_vec[0],less_price_vec[1],max_price_vec[0],max_price_vec[1],now_price_vec[0]))
-        for unit in vec:
+        for i in range(0,len(vec)):
+            unit = vec[i]
+            last_tag = "" 
+            if i == len(vec) - 1:
+                last_tag = "最后" 
+        #for unit in vec:
             #筛选掉价格不变的
             if less_price_vec[0] == max_price_vec[0]:
                 continue
@@ -622,7 +631,7 @@ def do_log_analysis(ret_map):
             arg_map["now"] = now_price_vec[0] 
             log_level = 0
             if unit[0]:
-                arg_map["up"] = "涨"
+                arg_map["up"] = last_tag + "涨"
                 if cnt == WIN_NUM - 1:
                     log_level = 1
                     arg_map["prefix"] = "稍微注意连涨 "
@@ -633,7 +642,7 @@ def do_log_analysis(ret_map):
                     arg_map["prefix"] = "特别注意连涨 "
                     log_level = 3
             else:
-                arg_map["up"] = "跌"
+                arg_map["up"] = last_tag + "跌"
                 if cnt >= LOSE_NUM - 2 and cnt <= LOSE_NUM - 1:
                     arg_map["prefix"] = "稍微注意连跌 "
                     log_level = 1
@@ -849,11 +858,14 @@ def get_select_sql(now_table,id,change_table_flag):
                         column_vec.append(column)
                         size = size + 1
         i = i + 1
+    last_table = now_table 
+    if change_table_flag:
+        last_table = table
     for i in range(0,len(column_vec)):
         if i >= 1:
             sql = sql + ","
         sql = sql + column_vec[len(column_vec) - i - 1] 
-    sql = sql + " from {0} where f_id = '{1}'".format(table,id)
+    sql = sql + " from {0} where f_id = '{1}'".format(last_table,id)
     return sql,ret
                 
 if __name__ == "__main__":
